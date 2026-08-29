@@ -17,7 +17,11 @@ from opencodelab.modal_client import (
     print_signup_message,
 )
 from opencodelab.modal_template import render_modal_app
-from opencodelab.models import infer_model_settings, normalize_huggingface_model, safe_slug
+from opencodelab.models import (
+    infer_model_settings,
+    normalize_huggingface_model,
+    safe_slug,
+)
 from opencodelab.opencode import ensure_opencode, launch_opencode, render_overlay
 from opencodelab.secrets import SecretStore
 

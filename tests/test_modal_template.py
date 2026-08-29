@@ -3,22 +3,22 @@ from opencodelab.modal_template import render_modal_app
 
 
 def _profile(**overrides):
-    values = dict(
-        name="qwen38",
-        model_id="gubernac/qwen3.8-27b-unc-fp8",
-        gpu="L40S",
-        max_model_len=65536,
-        idle_timeout_seconds=90,
-        endpoint="",
-        app_name="opencodelab-qwen38",
-        secret_name="opencodelab-qwen38-auth",
-        tool_call_parser="qwen3_coder",
-        reasoning_parser="qwen3",
-        trust_remote_code=False,
-        speculative_mtp_tokens=3,
-        language_model_only=True,
-        vllm_version="0.24.0",
-    )
+    values = {
+        "name": "qwen38",
+        "model_id": "gubernac/qwen3.8-27b-unc-fp8",
+        "gpu": "L40S",
+        "max_model_len": 65536,
+        "idle_timeout_seconds": 90,
+        "endpoint": "",
+        "app_name": "opencodelab-qwen38",
+        "secret_name": "opencodelab-qwen38-auth",
+        "tool_call_parser": "qwen3_coder",
+        "reasoning_parser": "qwen3",
+        "trust_remote_code": False,
+        "speculative_mtp_tokens": 3,
+        "language_model_only": True,
+        "vllm_version": "0.24.0",
+    }
     values.update(overrides)
     return Profile(**values)
 
