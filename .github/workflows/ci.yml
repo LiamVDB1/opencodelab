@@ -64,5 +64,5 @@ jobs:
           python-version: "3.12"
       - name: Build with declared minimum setuptools
         run: >-
-          uv run --no-project --with 'setuptools==77.0.0' --with 'build>=1.2,<2'
+          uv run --no-project --with 'setuptools==77.0.1' --with 'build>=1.2,<2'
           python -m build --no-isolation
