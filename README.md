@@ -3,12 +3,12 @@
 Run compatible Hugging Face models inside your normal [OpenCode](https://opencode.ai/) on a scale-to-zero [Modal](https://modal.com/) GPU.
 
 ```text
-Hugging Face model -> Modal GPU -> OpenAI-compatible vLLM endpoint -> OpenCode
+OpenCode -> authenticated CPU gateway -> protected Modal GPU -> OpenAI-compatible vLLM
 ```
 
-The tested launch setup is an **abliterated Qwen3.8 27B FP8** model on an **L40S 48 GB**. On Liam's current deployment it runs with 65,536-token context, OpenCode tool calling, roughly 44-49 decode tokens/sec once warm, and a 90-second idle scale-down window. The measured cached cold start for that exact setup is about 106 seconds.
+The tested launch setup is an **abliterated Qwen3.8 27B FP8** model on an **L40S 48 GB**. In one private deployment it ran with 65,536-token context, OpenCode tool calling, roughly 44-49 decode tokens/sec once warm, and a 90-second idle scale-down window. The measured cached cold start for that exact setup was about 106 seconds. These are observations, not a live public-wrapper verification or a performance guarantee.
 
-OpenCodeLab does **not** host a shared inference service. It deploys the model into **your own Modal account**, creates a private API credential for the endpoint, and launches your existing OpenCode installation with a temporary provider overlay. Your normal OpenCode settings stay intact.
+OpenCodeLab does **not** host a shared inference service. It deploys the model into a dedicated Environment in **your own Modal account**, creates a profile-specific API credential, and launches your existing OpenCode installation with a temporary provider overlay. Your normal OpenCode settings stay intact.
 
 > OpenCodeLab is an independent project. It is not built by, affiliated with, or endorsed by OpenCode, Modal, Hugging Face, Qwen, or the authors of any model you choose to run.
 
@@ -24,7 +24,7 @@ GPU: L40S
 
 1. Verify Python 3.11+ and OpenCode. If OpenCode is missing, install it using its current official instructions.
 2. Install OpenCodeLab from the repository, preferably with `uv tool install git+https://github.com/LiamVDB1/opencodelab` or with pipx if uv is unavailable.
-3. Run `opencodelab doctor`. If Modal is not authenticated, use `opencodelab signup` first if I need an account. If that command shows a disclosed OpenCodeLab partner/referral link, explain that it may support the project at no extra cost to me; the normal Modal signup route remains an alternative. Then run the Modal login flow and keep it alive while I approve it in the browser.
+3. Run `opencodelab doctor`. A non-zero result is expected until OpenCode, Modal authentication, a profile, and its local endpoint credential are all present. If I need a Modal account, run `opencodelab signup`; it prints Modal's ordinary site and is not a referral link. Then run `opencodelab login` and keep it alive while I approve the browser login.
 4. Before any command that may consume Modal credits, show me the exact Hugging Face model, selected GPU, and current Modal pricing, then ask me to approve the spend boundary. Do not assume free credits equal approval.
 5. After I approve, run `opencodelab setup gubernac/qwen3.8-27b-unc-fp8 --gpu L40S --context 65536 --yes`.
 6. Do not send an inference request or wake the GPU just to test installation unless I explicitly approve that spend. Validate with `opencodelab doctor` and `opencodelab list` instead.
@@ -60,6 +60,12 @@ Check the local environment without waking a GPU:
 opencodelab doctor
 ```
 
+`doctor` returns non-zero until all required pieces are configured. It does not call the model endpoint. If Modal authentication is the missing item, authenticate with:
+
+```bash
+opencodelab login
+```
+
 Then configure the tested Qwen setup:
 
 ```bash
@@ -68,7 +74,7 @@ opencodelab setup gubernac/qwen3.8-27b-unc-fp8 \
   --context 65536
 ```
 
-OpenCodeLab shows the deployment plan and asks for confirmation before it changes Modal state. After setup:
+OpenCodeLab shows the model, GPU, dated Modal price snapshot, scale-down settings, and deployment plan before asking for confirmation. Setup can consume Modal credits for image builds or later GPU work; confirmation is the cost boundary. After setup:
 
 ```bash
 cd ~/your-project
@@ -99,7 +105,7 @@ opencodelab gpu L40S
 
 Changing the configured GPU redeploys the Modal app. The expensive GPU is used when the model actually runs; OpenCodeLab still keeps `max_containers=1` and the configured scale-down window.
 
-As of **2026-08-29**, Modal's public pricing lists:
+As of **2026-08-30**, Modal's public pricing lists:
 
 | GPU | Price | $30 raw GPU time* |
 | --- | ---: | ---: |
@@ -129,7 +135,7 @@ What "compatible" means:
 3. For OpenCode tool use, the model and your vLLM version need a compatible tool-call parser.
 4. Reasoning models may need a reasoning parser.
 
-OpenCodeLab currently auto-configures the parser path we have verified for Qwen3/Qwen3.8 and the Hermes tool parser for Qwen2.5/QwQ-style models. For an unknown architecture it deliberately **does not invent a parser**. Chat may work while agent tool calls do not.
+OpenCodeLab currently auto-configures the parser path we have verified for Qwen3/Qwen3.8 and the Hermes tool parser for Qwen2.5/QwQ-style models. This inference is a **best-effort model-name convention**, not a compatibility check: it only inspects the model id. For an unknown architecture it deliberately **does not invent a parser**. Chat may work while agent tool calls do not. The safest choice for any model you have not verified yourself is an explicit `--tool-call-parser none --reasoning-parser none` (or a parser you have confirmed against your chosen vLLM version).
 
 Override parsers explicitly when you know the correct vLLM configuration:
 
@@ -194,9 +200,13 @@ Or launch a profile once without changing the default:
 opencodelab --profile another
 ```
 
+Prototype v0.1 profiles predate the dedicated gateway and Environment lifecycle and cannot be upgraded in place safely. Remove their old resources manually in the Modal dashboard, move aside the local config file named in OpenCodeLab's schema error, then run setup again. OpenCodeLab rejects the old config instead of silently launching the less-protected deployment.
+
 ## What OpenCodeLab changes
 
-OpenCodeLab stores non-secret profile metadata under your OS user config directory and stores the generated endpoint key in the system keyring when available. If no usable keyring exists, it falls back to a local `secrets.json` under the OpenCodeLab user-config directory and attempts to restrict the file to the current user.
+OpenCodeLab creates a random client API key for each profile. A small CPU gateway validates that key before it forwards a request to the GPU-backed vLLM server, which validates the same key again. The GPU endpoint also requires a dedicated Modal proxy token. That workspace credential is stored only in the gateway's Modal Secret; it is never passed to OpenCode or stored as the local client key. Unauthorized internet traffic can start at most the one-container CPU gateway, not the GPU function.
+
+The local client key is stored in the system keyring when available. If no usable keyring exists, OpenCodeLab falls back to a local `secrets.json` under its user-config directory and restricts the file to the current user where the platform permits it. Non-secret profile metadata records the originating Modal workspace ID plus the dedicated Environment, app, secrets, and proxy-token ID. Remote lifecycle commands refuse to run after the active Modal profile switches to another workspace, even if that workspace happens to contain resources with the same names.
 
 It generates two local runtime artifacts outside the repository:
 
@@ -207,7 +217,7 @@ When OpenCode starts, OpenCodeLab sets `OPENCODE_CONFIG` to that overlay and `OP
 
 OpenCodeLab does **not** replace your global OpenCode config.
 
-## Modal signup / partner disclosure
+## Modal signup
 
 Run:
 
@@ -215,9 +225,7 @@ Run:
 opencodelab signup
 ```
 
-The current release points to Modal's ordinary signup page. If OpenCodeLab later receives an official Modal partner/referral URL, the project may ship that tracked URL instead. When a partner URL is active, `opencodelab signup` will disclose that the link may support OpenCodeLab at no extra cost to the user. The ordinary Modal signup route will remain usable.
-
-No referral relationship is implied until one actually exists.
+This points to Modal's ordinary site. OpenCodeLab has no Modal partnership or referral link.
 
 ## Tested configuration
 
@@ -245,30 +253,34 @@ Those speed/startup numbers are observations from one setup, not guarantees for 
 
 ```text
 opencodelab setup [HF_MODEL]    deploy/configure a model
+opencodelab login               authenticate the bundled Modal client
 opencodelab                     launch normal OpenCode with the default profile
 opencodelab run "task"          one-shot OpenCode task
 opencodelab gpu H100            redeploy the current profile on H100
+opencodelab remove [PROFILE]    remove the dedicated Modal resources and local profile
 opencodelab list                list configured model profiles
 opencodelab use PROFILE         choose the default profile
-opencodelab config              show non-secret profile config
+opencodelab config [show]       show non-secret profile config
 opencodelab doctor              validate setup without sending inference
 opencodelab signup [--open]     show/open the Modal signup URL
 ```
 
 `opencodelab setup --help` exposes context, idle timeout, tool/reasoning parser, MTP, vLLM version, gated-model token, remote-code, and dry-run controls.
 
+`opencodelab remove` is destructive and confirms before stopping the Modal app. It also deletes both Modal Secrets, revokes the dedicated proxy token, and deletes the dedicated Environment. Cleanup is retry-safe and preserves local recovery state if any remote step remains incomplete. `--local-only` removes only local state and deliberately leaves the Modal resources for manual management.
+
 ## Security and cost boundaries
 
-- Endpoint authentication is enabled by default.
+- A profile-specific key is checked in a CPU gateway before any GPU invocation, then checked again by vLLM; the GPU endpoint independently requires a Modal proxy token that is never injected into OpenCode.
 - Secrets are never intentionally stored in the Git repository.
 - The Modal deployment is capped at one GPU container.
-- The default idle scale-down is 90 seconds.
+- `min_containers=0` and `buffer_containers=0` preserve scale-to-zero; the default idle scale-down window is 90 seconds.
 - `trust_remote_code` is opt-in.
 - `opencodelab doctor` never calls the model endpoint.
 - Setup requires explicit confirmation unless `--yes` is passed.
 - `--yes` means the human or supervising agent has already approved the Modal cost boundary; it is not permission to spend without approval.
 
-See [SECURITY.md](SECURITY.md) for the trust-boundary notes.
+See [SECURITY.md](https://github.com/LiamVDB1/opencodelab/blob/main/SECURITY.md) for the trust-boundary notes.
 
 ## What this project does not promise
 
@@ -284,15 +296,15 @@ You are responsible for the model you select, its license, the workloads you run
 
 ## Development
 
-Run the test suite without touching a real Modal deployment:
+See [docs/DEVELOPMENT.md](https://github.com/LiamVDB1/opencodelab/blob/main/docs/DEVELOPMENT.md) for the full local workflow and [docs/RELEASING.md](https://github.com/LiamVDB1/opencodelab/blob/main/docs/RELEASING.md) for the release checklist. The main test command does not touch a real Modal deployment:
 
 ```bash
 PYTHONPATH=src uv run --no-project \
-  --with pytest --with modal --with keyring --with platformdirs \
+  --with pytest --with pytest-cov --with 'modal>=1.5.4,<2' --with keyring --with platformdirs \
   python -m pytest -q
 ```
 
-The tests exercise model-id validation, parser inference, config/secrets separation, generated Modal code, endpoint parsing, and OpenCode overlay/argument construction.
+The tests exercise command behavior and failure paths, model and endpoint validation, parser inference, config/secrets separation, generated Modal code, teardown, and OpenCode overlay/argument construction.
 
 ## License
 

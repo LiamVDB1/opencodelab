@@ -13,7 +13,14 @@ def test_normalize_huggingface_url_and_id():
 
 
 def test_invalid_huggingface_model_rejected():
-    for value in ("qwen", "https://example.com/a/b", "owner/model\nBAD=1", "../model"):
+    for value in (
+        "qwen",
+        "https://example.com/a/b",
+        "https://huggingface.co/owner/model?revision=main",
+        "https://huggingface.co/owner/model#readme",
+        "owner/model\nBAD=1",
+        "../model",
+    ):
         try:
             normalize_huggingface_model(value)
         except ValueError:

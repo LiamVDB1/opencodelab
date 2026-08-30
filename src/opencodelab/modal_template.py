@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from opencodelab.config import Profile
+from opencodelab.config import Profile, modal_endpoint_label
 
 
 def _py(value: str) -> str:
@@ -10,6 +10,7 @@ def _py(value: str) -> str:
 
 
 def render_modal_app(profile: Profile) -> str:
+    endpoint_label = modal_endpoint_label(profile.name)
     optional_args: list[str] = []
     if profile.language_model_only:
         optional_args.append('        "--language-model-only",')
@@ -52,6 +53,8 @@ MAX_MODEL_LEN = {profile.max_model_len}
 IDLE_TIMEOUT_SECONDS = {profile.idle_timeout_seconds}
 APP_NAME = {_py(profile.app_name)}
 SECRET_NAME = {_py(profile.secret_name)}
+GATEWAY_SECRET_NAME = {_py(profile.gateway_secret_name)}
+ENDPOINT_LABEL = {_py(endpoint_label)}
 VLLM_VERSION = {_py(profile.vllm_version)}
 VLLM_PORT = 8000
 MINUTES = 60
@@ -73,16 +76,24 @@ vllm_image = (
     )
 )
 
+gateway_image = modal.Image.debian_slim(python_version="3.12").uv_pip_install(
+    "fastapi[standard]",
+    "httpx",
+)
+
 hf_cache = modal.Volume.from_name("opencodelab-huggingface-cache", create_if_missing=True)
 vllm_cache = modal.Volume.from_name("opencodelab-vllm-cache", create_if_missing=True)
 auth = modal.Secret.from_name(SECRET_NAME)
+gateway_auth = modal.Secret.from_name(GATEWAY_SECRET_NAME)
 app = modal.App(APP_NAME)
 
 
 @app.function(
     image=vllm_image,
     gpu=GPU,
+    min_containers=0,
     max_containers=1,
+    buffer_containers=0,
     scaledown_window=IDLE_TIMEOUT_SECONDS,
     timeout=20 * MINUTES,
     secrets=[auth],
@@ -92,8 +103,13 @@ app = modal.App(APP_NAME)
     }},
 )
 @modal.concurrent(max_inputs=1)
-@modal.web_server(port=VLLM_PORT, startup_timeout=20 * MINUTES)
-def serve():
+@modal.web_server(
+    port=VLLM_PORT,
+    startup_timeout=20 * MINUTES,
+    label=f"{{ENDPOINT_LABEL}}-model",
+    requires_proxy_auth=True,
+)
+def serve_model():
     api_key = os.environ["OPENCODELAB_API_KEY"]
     cmd = [
         "vllm",
@@ -119,4 +135,178 @@ def serve():
         "--enable-prefix-caching",
 {optional}    ]
     subprocess.Popen(cmd)
+
+
+@app.function(
+    image=gateway_image,
+    min_containers=0,
+    max_containers=1,
+    buffer_containers=0,
+    scaledown_window=60,
+    timeout=20 * MINUTES,
+    secrets=[gateway_auth],
+)
+@modal.concurrent(max_inputs=32)
+@modal.asgi_app(label=ENDPOINT_LABEL)
+def gateway():
+    import hmac
+    import re
+
+    import httpx
+    from fastapi import FastAPI, Request
+    from fastapi.responses import JSONResponse, StreamingResponse
+    from urllib.parse import urlsplit
+
+    _dns_label = re.compile(r"^[a-z0-9](?:[a-z0-9-]{{0,61}}[a-z0-9])?$")
+    _region_label = re.compile(r"^[a-z]{{2}}-[a-z0-9]+$")
+
+    def trusted_model_host(host: str) -> bool:
+        model_label = ENDPOINT_LABEL + "-model"
+        if host.endswith(".modal.run"):
+            rest = host[: -len(".modal.run")]
+            source, separator, label = rest.partition("--")
+            return (
+                bool(separator)
+                and bool(source)
+                and label == model_label
+                and _dns_label.fullmatch(rest) is not None
+            )
+        if host.endswith(".modal.direct"):
+            labels = host[: -len(".modal.direct")].split(".")
+            if len(labels) != 2 or _region_label.fullmatch(labels[1]) is None:
+                return False
+            first = labels[0]
+            source, separator, label = first.partition("--")
+            return (
+                bool(separator)
+                and bool(source)
+                and label == model_label
+                and _dns_label.fullmatch(first) is not None
+            )
+        return False
+
+    web = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
+
+    @web.api_route("/v1/{{path:path}}", methods=methods)
+    async def forward(path: str, request: Request):
+        client_key = os.environ["OPENCODELAB_API_KEY"]
+        expected = f"Bearer {{client_key}}"
+        supplied = request.headers.get("authorization", "")
+        if not hmac.compare_digest(supplied, expected):
+            return JSONResponse({{"error": "Unauthorized"}}, status_code=401)
+
+        body_parts = []
+        body_size = 0
+        async for chunk in request.stream():
+            body_size += len(chunk)
+            if body_size > 16 * 1024 * 1024:
+                return JSONResponse({{"error": "Request body too large"}}, status_code=413)
+            body_parts.append(chunk)
+        body = b"".join(body_parts)
+
+        raw_target = serve_model.get_web_url()
+        if not raw_target:
+            return JSONResponse({{"error": "Model service unavailable"}}, status_code=503)
+        target_parts = urlsplit(raw_target)
+        target_host = (target_parts.hostname or "").lower()
+        if (
+            target_parts.scheme != "https"
+            or target_parts.username
+            or target_parts.password
+            or target_parts.port is not None
+            or target_parts.query
+            or target_parts.fragment
+            or not trusted_model_host(target_host)
+        ):
+            return JSONResponse({{"error": "Model service unavailable"}}, status_code=502)
+        target = f"https://{{target_host}}"
+
+        excluded = {{
+            "authorization",
+            "connection",
+            "content-length",
+            "host",
+            "keep-alive",
+            "modal-key",
+            "modal-secret",
+            "proxy-authenticate",
+            "proxy-authorization",
+            "te",
+            "trailer",
+            "transfer-encoding",
+            "upgrade",
+        }}
+        connection_headers = {{
+            value.strip().lower()
+            for value in request.headers.get("connection", "").split(",")
+            if value.strip()
+        }}
+        headers = {{
+            key: value
+            for key, value in request.headers.items()
+            if key.lower() not in excluded | connection_headers
+        }}
+        headers["Authorization"] = expected
+        headers["Modal-Key"] = os.environ["OPENCODELAB_PROXY_TOKEN_ID"]
+        headers["Modal-Secret"] = os.environ["OPENCODELAB_PROXY_TOKEN_SECRET"]
+
+        client = httpx.AsyncClient(timeout=1200.0, follow_redirects=False)
+        try:
+            outbound = client.build_request(
+                request.method,
+                f"{{target}}/v1/{{path}}",
+                params=request.query_params,
+                headers=headers,
+                content=body,
+            )
+            target_url = urlsplit(target)
+            target_origin = (target_url.scheme, target_url.hostname, target_url.port)
+            for _ in range(21):
+                upstream = await client.send(outbound, stream=True)
+                next_request = upstream.next_request
+                if next_request is None:
+                    break
+                next_url = urlsplit(str(next_request.url))
+                next_origin = (next_url.scheme, next_url.hostname, next_url.port)
+                if next_origin != target_origin:
+                    await upstream.aclose()
+                    await client.aclose()
+                    return JSONResponse({{"error": "Unsafe model redirect"}}, status_code=502)
+                await upstream.aclose()
+                outbound = next_request
+            else:
+                await client.aclose()
+                return JSONResponse({{"error": "Too many model redirects"}}, status_code=502)
+        except httpx.RequestError:
+            await client.aclose()
+            return JSONResponse({{"error": "Model service unavailable"}}, status_code=502)
+
+        response_connection_headers = {{
+            value.strip().lower()
+            for value in upstream.headers.get("connection", "").split(",")
+            if value.strip()
+        }}
+        response_excluded = excluded | response_connection_headers
+        response_headers = {{
+            key: value
+            for key, value in upstream.headers.items()
+            if key.lower() not in response_excluded
+        }}
+
+        async def stream_upstream():
+            try:
+                async for chunk in upstream.aiter_raw():
+                    yield chunk
+            finally:
+                await upstream.aclose()
+                await client.aclose()
+
+        return StreamingResponse(
+            stream_upstream(),
+            status_code=upstream.status_code,
+            headers=response_headers,
+        )
+
+    return web
 '''

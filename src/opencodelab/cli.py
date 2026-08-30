@@ -8,13 +8,33 @@ import secrets as token_secrets
 import sys
 from dataclasses import asdict, replace
 
-from opencodelab.config import ConfigStore, LabConfig, Profile
+from opencodelab.config import (
+    ConfigError,
+    ConfigStore,
+    LabConfig,
+    Profile,
+    bind_profile_endpoint,
+    modal_endpoint_label,
+    modal_resource_names,
+    verify_profile_endpoint,
+)
 from opencodelab.modal_client import (
+    allow_modal_proxy_token,
+    create_gateway_secret,
+    create_modal_environment,
+    create_modal_proxy_token,
     create_modal_secret,
+    delete_modal_environment,
+    delete_modal_proxy_token,
+    delete_modal_secret,
     deploy_modal_app,
     ensure_modal_auth,
+    get_modal_workspace_id,
+    modal_environment_exists,
     open_signup,
     print_signup_message,
+    require_modal_workspace,
+    stop_modal_app,
 )
 from opencodelab.modal_template import render_modal_app
 from opencodelab.models import (
@@ -27,9 +47,19 @@ from opencodelab.secrets import SecretStore
 
 DEFAULT_MODEL = "gubernac/qwen3.8-27b-unc-fp8"
 DEFAULT_GPU = "L40S"
-COMMANDS = {"setup", "gpu", "use", "list", "config", "doctor", "signup", "help"}
-_GPU = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 _VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+_-]{0,31}$")
+_PARSER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+GPU_PRICING = {
+    "L40S": {"per_second": 0.000542, "per_hour": 1.9512},
+    "H100": {"per_second": 0.001097, "per_hour": 3.9492},
+}
+PRICING_AS_OF = "2026-08-30"
+PRICING_URL = "https://modal.com/pricing"
+
+
+class _PostDeploySaveError(RuntimeError):
+    """The Modal deployment is live but the local profile could not be saved."""
 
 
 def _confirm(message: str, *, yes: bool) -> None:
@@ -47,12 +77,25 @@ def _parser_value(value: str, inferred: str | None) -> str | None:
         return inferred
     if value == "none":
         return None
-    return value
+    return _validate_parser(value)
 
 
 def _validate_gpu(value: str) -> str:
-    if not _GPU.fullmatch(value):
-        raise ValueError("GPU must be a single Modal GPU selector such as L40S or H100; multi-GPU selectors are not supported yet")
+    normalized = value.upper()
+    if normalized not in GPU_PRICING:
+        raise ValueError("GPU must be L40S or H100; other and multi-GPU selectors are not supported")
+    return normalized
+
+
+def _validate_parser(value: str) -> str:
+    if not _PARSER.fullmatch(value):
+        raise ValueError("Parser names may contain only letters, numbers, dots, underscores, and hyphens")
+    return value
+
+
+def _validate_env_name(value: str) -> str:
+    if not _ENV_NAME.fullmatch(value):
+        raise ValueError("Hugging Face token environment variable must be a valid environment name")
     return value
 
 
@@ -70,16 +113,23 @@ def _build_profile(args: argparse.Namespace) -> Profile:
     context = args.context or (65536 if "qwen3.8" in model_id.lower() else 32768)
     if context < 1024:
         raise ValueError("Context must be at least 1024 tokens")
+    if context > 1_000_000:
+        raise ValueError("Context cannot exceed 1,000,000 tokens")
     if not 2 <= args.idle_timeout <= 1200:
         raise ValueError("Idle timeout must be between 2 and 1200 seconds")
     tool_parser = _parser_value(args.tool_call_parser, inferred.tool_call_parser)
     reasoning_parser = _parser_value(args.reasoning_parser, inferred.reasoning_parser)
     mtp_tokens = inferred.speculative_mtp_tokens if args.mtp_tokens is None else args.mtp_tokens
+    if not 0 <= mtp_tokens <= 16:
+        raise ValueError("MTP speculative tokens must be between 0 and 16")
     language_model_only = (
         inferred.language_model_only if args.language_model_only is None else args.language_model_only
     )
     vllm_version = _validate_version(args.vllm_version)
-    app_slug = safe_slug(profile_name, max_length=28)
+    _validate_env_name(args.hf_token_env)
+    environment_name, app_name, secret_name, gateway_secret_name = modal_resource_names(
+        profile_name
+    )
     return Profile(
         name=profile_name,
         model_id=model_id,
@@ -87,8 +137,10 @@ def _build_profile(args: argparse.Namespace) -> Profile:
         max_model_len=context,
         idle_timeout_seconds=args.idle_timeout,
         endpoint="",
-        app_name=f"opencodelab-{app_slug}",
-        secret_name=f"opencodelab-{app_slug}-auth",
+        environment_name=environment_name,
+        app_name=app_name,
+        secret_name=secret_name,
+        gateway_secret_name=gateway_secret_name,
         tool_call_parser=tool_parser,
         reasoning_parser=reasoning_parser,
         trust_remote_code=args.trust_remote_code,
@@ -142,6 +194,7 @@ def cmd_setup(argv: list[str]) -> int:
 
     plan = {
         "profile": profile.name,
+        "modal_environment": profile.environment_name,
         "model": profile.model_id,
         "gpu": profile.gpu,
         "context": profile.max_model_len,
@@ -150,6 +203,13 @@ def cmd_setup(argv: list[str]) -> int:
         "reasoning_parser": profile.reasoning_parser,
         "trust_remote_code": profile.trust_remote_code,
         "max_gpu_containers": 1,
+        "max_cpu_gateway_containers": 1,
+        "authentication": "profile key at CPU gateway; server-side Modal proxy token at GPU",
+        "gpu_price_per_second_usd": GPU_PRICING[profile.gpu]["per_second"],
+        "gpu_price_per_hour_usd": GPU_PRICING[profile.gpu]["per_hour"],
+        "pricing_as_of": PRICING_AS_OF,
+        "pricing_url": PRICING_URL,
+        "inference_requests": 0,
     }
     print(json.dumps(plan, indent=2))
     if args.dry_run:
@@ -162,31 +222,131 @@ def cmd_setup(argv: list[str]) -> int:
     )
     if not ensure_modal_auth(interactive=True):
         raise SystemExit("Modal authentication did not complete successfully.")
+    workspace_id = get_modal_workspace_id()
 
     secret_store = SecretStore(store.root)
-    existing_key = secret_store.get_api_key(profile.name) if profile.name in config.profiles else None
-    api_key = existing_key or token_secrets.token_urlsafe(32)
-    hf_token = os.getenv(args.hf_token_env) if args.hf_token_env else None
-    if existing_key and not hf_token:
-        print("Reusing the existing Modal endpoint-auth secret for this profile.")
-    else:
-        create_modal_secret(profile.secret_name, api_key, hf_token=hf_token, force=True)
+    existing_profile = config.profiles.get(profile.name)
+    if existing_profile and existing_profile.workspace_id != workspace_id:
+        raise SystemExit(
+            "The active Modal workspace does not own this OpenCodeLab profile. "
+            "Activate the original Modal profile before reconfiguring it."
+        )
+    profile = replace(profile, workspace_id=workspace_id)
+    existing_key = (
+        secret_store.get_api_key(profile.name, allow_environment=False)
+        if existing_profile
+        else None
+    )
+    if existing_profile and (
+        not existing_key or not existing_profile.proxy_token_id or not existing_profile.endpoint
+    ):
+        raise SystemExit(
+            f"Profile {profile.name!r} is an incomplete recovery profile. "
+            "Run `opencodelab remove --yes` and then setup again."
+        )
 
     deployment_path = store.deployment_path(profile.name)
     store.write_generated(deployment_path, render_modal_app(profile))
-    endpoint = deploy_modal_app(deployment_path, profile.app_name)
-    profile = replace(profile, endpoint=endpoint)
 
-    secret_location = secret_store.set_api_key(profile.name, api_key)
-    profiles = dict(config.profiles)
-    profiles[profile.name] = profile
-    updated = LabConfig(
-        version=config.version,
-        default_profile=config.default_profile or profile.name,
-        profiles=profiles,
-    )
-    store.save(updated)
-    store.write_generated(store.overlay_path(profile.name), render_overlay(profile))
+    if existing_profile:
+        api_key = existing_key
+        profile = replace(profile, proxy_token_id=existing_profile.proxy_token_id)
+        secret_location = "existing secure storage"
+    else:
+        api_key = token_secrets.token_urlsafe(32)
+        recovery_profiles = dict(config.profiles)
+        recovery_profiles[profile.name] = profile
+        recovery = replace(
+            config,
+            default_profile=config.default_profile or profile.name,
+            profiles=recovery_profiles,
+        )
+        try:
+            store.save(recovery)
+        except OSError as exc:
+            raise RuntimeError(
+                "Could not persist OpenCodeLab recovery state; no Modal resources "
+                "were created. Resolve the local storage problem and run setup again."
+            ) from exc
+        try:
+            create_modal_environment(profile.environment_name)
+        except RuntimeError as exc:
+            try:
+                store.save(config)
+            except OSError:
+                pass
+            raise RuntimeError(
+                f"Could not create dedicated Modal environment {profile.environment_name!r}; "
+                "choose another profile name"
+            ) from exc
+
+        try:
+            def record_proxy_token(token_id: str) -> None:
+                nonlocal profile
+                profile = replace(profile, proxy_token_id=token_id)
+                recovery_profiles[profile.name] = profile
+                store.save(replace(recovery, profiles=recovery_profiles))
+
+            proxy_token_id, proxy_token_secret = create_modal_proxy_token(
+                on_token_id=record_proxy_token
+            )
+            profile = replace(profile, proxy_token_id=proxy_token_id)
+            secret_location = secret_store.set_api_key(profile.name, api_key)
+            allow_modal_proxy_token(proxy_token_id, profile.environment_name)
+            create_gateway_secret(
+                profile.gateway_secret_name,
+                api_key,
+                environment_name=profile.environment_name,
+                proxy_token_id=proxy_token_id,
+                proxy_token_secret=proxy_token_secret,
+            )
+        except (OSError, RuntimeError) as exc:
+            raise RuntimeError(
+                f"Setup did not complete. Recovery profile {profile.name!r} was retained; "
+                "run `opencodelab remove --yes` before trying again."
+            ) from exc
+
+    hf_token = os.getenv(args.hf_token_env) if args.hf_token_env else None
+    try:
+        create_modal_secret(
+            profile.secret_name,
+            api_key,
+            environment_name=profile.environment_name,
+            hf_token=hf_token,
+            force=True,
+        )
+        endpoint = deploy_modal_app(
+            deployment_path,
+            profile.app_name,
+            environment_name=profile.environment_name,
+            endpoint_label=modal_endpoint_label(profile.name),
+        )
+        profile = bind_profile_endpoint(replace(profile, endpoint=endpoint), api_key)
+        store.write_generated(store.overlay_path(profile.name), render_overlay(profile, api_key))
+        profiles = dict(config.profiles)
+        profiles[profile.name] = profile
+        updated = LabConfig(
+            version=config.version,
+            default_profile=config.default_profile or profile.name,
+            profiles=profiles,
+        )
+        try:
+            store.save(updated)
+        except OSError as exc:
+            raise _PostDeploySaveError(
+                f"The Modal deployment for profile {profile.name!r} succeeded and is live at "
+                f"{profile.endpoint}, but OpenCodeLab could not save the local profile to "
+                f"{store.path}. The credential and OpenCode overlay are already in place; "
+                f"re-run `opencodelab setup --name {profile.name} --force` to refresh local "
+                "state, or run `opencodelab remove --yes` to tear the deployment down."
+            ) from exc
+    except _PostDeploySaveError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise RuntimeError(
+            f"Setup did not complete. Recovery profile {profile.name!r} was retained; "
+            "run `opencodelab remove --yes` before trying again."
+        ) from exc
 
     print(f"\nConfigured {profile.name}: {profile.model_id} on {profile.gpu}")
     print(f"Endpoint: {profile.endpoint}")
@@ -223,26 +383,154 @@ def cmd_gpu(argv: list[str]) -> int:
     store = ConfigStore()
     config = store.load()
     current = _resolve_profile(config, args.profile)
+    if not current.endpoint or not current.proxy_token_id:
+        raise SystemExit(
+            f"Profile {current.name!r} is incomplete. Run `opencodelab remove --yes` "
+            "and then setup again."
+        )
     if current.gpu == gpu:
         print(f"{current.name} already uses {gpu}.")
         return 0
+    api_key = SecretStore(store.root).get_api_key(current.name, allow_environment=False)
+    if not api_key:
+        raise SystemExit(f"Endpoint credential for profile {current.name!r} is missing")
+    verify_profile_endpoint(current, api_key)
     updated_profile = replace(current, gpu=gpu)
-    print(f"{current.name}: {current.gpu} -> {gpu}")
+    print(f"Model: {current.model_id}")
+    print(f"GPU: {current.gpu} -> {gpu}")
+    price = GPU_PRICING[gpu]
+    print(
+        f"Modal GPU price snapshot ({PRICING_AS_OF}): "
+        f"${price['per_second']:.6f}/sec (~${price['per_hour']:.2f}/hr). {PRICING_URL}"
+    )
     _confirm(
         "OpenCodeLab will redeploy this Modal app. The GPU is selected when inference runs and can consume Modal credits.",
         yes=args.yes,
     )
     if not ensure_modal_auth(interactive=True):
         raise SystemExit("Modal authentication did not complete successfully.")
+    require_modal_workspace(current.workspace_id)
     deployment_path = store.deployment_path(updated_profile.name)
     store.write_generated(deployment_path, render_modal_app(updated_profile))
-    endpoint = deploy_modal_app(deployment_path, updated_profile.app_name)
-    updated_profile = replace(updated_profile, endpoint=endpoint)
+    endpoint = deploy_modal_app(
+        deployment_path,
+        updated_profile.app_name,
+        environment_name=updated_profile.environment_name,
+        endpoint_label=modal_endpoint_label(updated_profile.name),
+    )
+    updated_profile = bind_profile_endpoint(replace(updated_profile, endpoint=endpoint), api_key)
     profiles = dict(config.profiles)
     profiles[updated_profile.name] = updated_profile
     store.save(replace(config, profiles=profiles))
-    store.write_generated(store.overlay_path(updated_profile.name), render_overlay(updated_profile))
+    store.write_generated(
+        store.overlay_path(updated_profile.name), render_overlay(updated_profile, api_key)
+    )
     print(f"Switched {updated_profile.name} to {gpu}. Run `opencodelab` normally.")
+    return 0
+
+
+def cmd_remove(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="opencodelab remove",
+        description=(
+            "Stop a profile's Modal app, delete its secrets, revoke its proxy token and "
+            "dedicated Environment, and remove local configuration."
+        ),
+    )
+    parser.add_argument("profile", nargs="?", help="Profile to remove; defaults to the active profile")
+    parser.add_argument(
+        "--local-only",
+        action="store_true",
+        help=(
+            "Only remove local state; the Modal Environment, app, proxy token, and secrets "
+            "remain in your account"
+        ),
+    )
+    parser.add_argument("--yes", action="store_true", help="Skip the destructive removal confirmation")
+    args = parser.parse_args(argv)
+
+    store = ConfigStore()
+    config = store.load()
+    profile = _resolve_profile(config, args.profile)
+    if args.local_only:
+        message = (
+            f"OpenCodeLab will remove local profile {profile.name!r}. Its Modal Environment, "
+            "app, proxy token, and secrets will remain and must be managed in Modal."
+        )
+    else:
+        message = (
+            f"OpenCodeLab will permanently remove dedicated Modal Environment "
+            f"{profile.environment_name!r}, app {profile.app_name!r}, its proxy token and "
+            f"secrets, then remove local profile {profile.name!r}."
+        )
+    _confirm(message, yes=args.yes)
+
+    if not args.local_only:
+        if not ensure_modal_auth(interactive=True):
+            raise SystemExit("Modal authentication did not complete successfully.")
+        require_modal_workspace(profile.workspace_id)
+        cleanup_errors: list[str] = []
+        try:
+            environment_exists = modal_environment_exists(profile.environment_name)
+        except RuntimeError as exc:
+            environment_exists = False
+            cleanup_errors.append(str(exc))
+        cleanup_steps = []
+        if environment_exists:
+            cleanup_steps.extend([
+                lambda: stop_modal_app(
+                    profile.app_name,
+                    environment_name=profile.environment_name,
+                ),
+                lambda: delete_modal_secret(
+                    profile.gateway_secret_name,
+                    environment_name=profile.environment_name,
+                ),
+                lambda: delete_modal_secret(
+                    profile.secret_name,
+                    environment_name=profile.environment_name,
+                ),
+            ])
+        if profile.proxy_token_id:
+            cleanup_steps.append(lambda: delete_modal_proxy_token(profile.proxy_token_id))
+        for cleanup in cleanup_steps:
+            try:
+                cleanup()
+            except (RuntimeError, ValueError) as exc:
+                cleanup_errors.append(str(exc))
+        if not cleanup_errors and environment_exists:
+            try:
+                delete_modal_environment(profile.environment_name)
+            except RuntimeError as exc:
+                cleanup_errors.append(str(exc))
+        if cleanup_errors:
+            raise RuntimeError(
+                "Remote cleanup was incomplete; local recovery state was retained. "
+                + "; ".join(cleanup_errors)
+            )
+
+    SecretStore(store.root).delete_api_key(profile.name)
+    store.deployment_path(profile.name).unlink(missing_ok=True)
+    store.overlay_path(profile.name).unlink(missing_ok=True)
+    profiles = dict(config.profiles)
+    del profiles[profile.name]
+    default_profile = config.default_profile
+    if default_profile == profile.name:
+        default_profile = min(profiles) if profiles else None
+    store.save(replace(config, default_profile=default_profile, profiles=profiles))
+    print(f"Removed OpenCodeLab profile {profile.name}.")
+    return 0
+
+
+def cmd_login(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="opencodelab login",
+        description="Authenticate the Modal client bundled with OpenCodeLab.",
+    )
+    parser.parse_args(argv)
+    if not ensure_modal_auth(interactive=True):
+        raise SystemExit("Modal authentication did not complete successfully.")
+    print("Modal is authenticated for OpenCodeLab's bundled client.")
     return 0
 
 
@@ -273,7 +561,13 @@ def cmd_list() -> int:
 def cmd_config(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="opencodelab config")
     parser.add_argument("--profile")
+    parser.add_argument("show", nargs="?", help="optional literal 'show'")
     args = parser.parse_args(argv)
+    if args.show is not None and args.show != "show":
+        raise SystemExit(
+            f"opencodelab config does not accept {args.show!r}; "
+            "use 'opencodelab config' or 'opencodelab config show'"
+        )
     store = ConfigStore()
     profile = _resolve_profile(store.load(), args.profile)
     print(json.dumps(asdict(profile), indent=2))
@@ -302,8 +596,21 @@ def cmd_doctor() -> int:
     else:
         profile = _resolve_profile(config)
         print(f"PASS Profile: {profile.name} -> {profile.model_id} on {profile.gpu}")
+        if modal_ok:
+            try:
+                require_modal_workspace(profile.workspace_id)
+                print("PASS Modal workspace matches profile")
+            except RuntimeError as exc:
+                failures.append(str(exc))
+                print(f"FAIL Modal workspace: {exc}")
         if profile.endpoint:
-            print(f"PASS Endpoint configured: {profile.endpoint}")
+            try:
+                api_key = SecretStore(store.root).get_api_key(profile.name)
+                verify_profile_endpoint(profile, api_key or "")
+                print(f"PASS Endpoint configured: {profile.endpoint}")
+            except ValueError as exc:
+                failures.append(str(exc))
+                print(f"FAIL Endpoint: {exc}")
         else:
             print("FAIL Endpoint: profile has not been deployed")
             failures.append("Profile endpoint missing")
@@ -323,7 +630,7 @@ def cmd_doctor() -> int:
 
 def cmd_signup(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="opencodelab signup")
-    parser.add_argument("--open", action="store_true", help="Open the configured Modal signup/partner URL in your browser")
+    parser.add_argument("--open", action="store_true", help="Open Modal's ordinary site in your browser")
     args = parser.parse_args(argv)
     if args.open:
         open_signup()
@@ -338,12 +645,14 @@ def _print_help() -> None:
         "Run compatible Hugging Face models inside your normal OpenCode on a scale-to-zero Modal GPU.\n\n"
         "Commands:\n"
         "  opencodelab setup [HF_MODEL]   configure and deploy a model (default: Qwen3.8 27B abliterated FP8)\n"
+        "  opencodelab login              authenticate the bundled Modal client\n"
         "  opencodelab gpu H100           switch the current profile to another Modal GPU\n"
+        "  opencodelab remove [PROFILE]   stop and remove a deployment/profile\n"
         "  opencodelab list               list configured model profiles\n"
         "  opencodelab use PROFILE        choose the default profile\n"
-        "  opencodelab config             show non-secret profile configuration\n"
+        "  opencodelab config [show]     show non-secret profile configuration\n"
         "  opencodelab doctor             verify local setup without waking a GPU\n"
-        "  opencodelab signup [--open]   show the Modal signup/partner URL\n"
+        "  opencodelab signup [--open]   show Modal's ordinary site\n"
         "  opencodelab                    launch OpenCode with the default profile\n"
         "  opencodelab run 'task'         run a one-shot OpenCode task with the default profile\n\n"
         "Use `opencodelab setup --help` for model/GPU/parser options."
@@ -360,6 +669,11 @@ def launch(forwarded: list[str]) -> int:
     profile_name, forwarded = _extract_profile(forwarded)
     store = ConfigStore()
     profile = _resolve_profile(store.load(), profile_name)
+    if not profile.endpoint or not profile.proxy_token_id:
+        raise SystemExit(
+            f"Profile {profile.name!r} is incomplete. Run `opencodelab remove --yes` "
+            "and then setup again."
+        )
     api_key = SecretStore(store.root).get_api_key(profile.name)
     if not api_key:
         raise SystemExit(
@@ -368,30 +682,49 @@ def launch(forwarded: list[str]) -> int:
     return launch_opencode(profile, api_key, store, forwarded)
 
 
-def main() -> None:
-    argv = sys.argv[1:]
+def _dispatch(argv: list[str]) -> int:
     if not argv:
-        raise SystemExit(launch([]))
+        return launch([])
     command = argv[0]
     rest = argv[1:]
+    if command in {"--help", "-h"}:
+        _print_help()
+        return 0
     if command == "setup":
-        raise SystemExit(cmd_setup(rest))
+        return cmd_setup(rest)
+    if command == "login":
+        return cmd_login(rest)
     if command == "gpu":
-        raise SystemExit(cmd_gpu(rest))
+        return cmd_gpu(rest)
+    if command == "remove":
+        return cmd_remove(rest)
     if command == "use":
-        raise SystemExit(cmd_use(rest))
+        return cmd_use(rest)
     if command == "list":
-        raise SystemExit(cmd_list())
+        if rest:
+            raise SystemExit("opencodelab list does not accept arguments")
+        return cmd_list()
     if command == "config":
-        raise SystemExit(cmd_config(rest))
+        return cmd_config(rest)
     if command == "doctor":
-        raise SystemExit(cmd_doctor())
+        if rest:
+            raise SystemExit("opencodelab doctor does not accept arguments")
+        return cmd_doctor()
     if command == "signup":
-        raise SystemExit(cmd_signup(rest))
+        return cmd_signup(rest)
     if command == "help":
         _print_help()
-        return
-    raise SystemExit(launch(argv))
+        return 0
+    return launch(argv)
+
+
+def main() -> None:
+    try:
+        code = _dispatch(sys.argv[1:])
+    except (ConfigError, OSError, RuntimeError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        code = 1
+    raise SystemExit(code)
 
 
 if __name__ == "__main__":

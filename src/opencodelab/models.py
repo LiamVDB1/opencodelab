@@ -24,6 +24,8 @@ def normalize_huggingface_model(value: str) -> str:
         parsed = urlparse(raw)
         if parsed.netloc not in {"huggingface.co", "hf.co"}:
             raise ValueError("Only huggingface.co or hf.co model URLs are supported")
+        if parsed.query or parsed.fragment or parsed.params:
+            raise ValueError("Hugging Face model URLs cannot include query parameters or fragments")
         parts = [part for part in parsed.path.split("/") if part]
         if len(parts) != 2:
             raise ValueError("Expected a Hugging Face model URL like https://huggingface.co/owner/model")

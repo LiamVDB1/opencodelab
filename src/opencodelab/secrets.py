@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
 
 import keyring
@@ -19,10 +20,16 @@ class SecretStore:
     def _username(profile_name: str) -> str:
         return f"profile:{profile_name}:api-key"
 
-    def get_api_key(self, profile_name: str) -> str | None:
-        env_value = os.getenv("OPENCODELAB_API_KEY")
-        if env_value:
-            return env_value.strip()
+    def get_api_key(
+        self,
+        profile_name: str,
+        *,
+        allow_environment: bool = True,
+    ) -> str | None:
+        if allow_environment:
+            env_value = os.getenv("OPENCODELAB_API_KEY")
+            if env_value:
+                return env_value.strip()
         try:
             value = keyring.get_password(SERVICE, self._username(profile_name))
         except KeyringError:
@@ -67,9 +74,23 @@ class SecretStore:
         self._fallback_write(data)
 
     def _fallback_write(self, data: dict[str, str]) -> None:
-        self.root.mkdir(parents=True, exist_ok=True)
-        self.fallback_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         try:
-            os.chmod(self.fallback_path, 0o600)
+            self.root.chmod(0o700)
         except OSError:
             pass
+        fd, temp_name = tempfile.mkstemp(prefix=".secrets-", dir=self.root)
+        try:
+            try:
+                os.fchmod(fd, 0o600)
+            except OSError:
+                pass
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(data, handle, indent=2, sort_keys=True)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_name, self.fallback_path)
+        finally:
+            if os.path.exists(temp_name):
+                os.unlink(temp_name)

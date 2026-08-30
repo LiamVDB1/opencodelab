@@ -1,25 +1,38 @@
 [build-system]
-requires = ["setuptools>=75"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "opencodelab"
-version = "0.1.0"
+version = "0.2.0"
 description = "Run compatible Hugging Face models inside OpenCode on scale-to-zero Modal GPUs."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
 authors = [{ name = "Liam Van den Broeck" }]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development :: Build Tools",
+]
 dependencies = [
   "keyring>=25,<27",
-  "modal>=1.5,<2",
+  "modal>=1.5.4,<2",
   "platformdirs>=4,<5",
 ]
 
 [project.optional-dependencies]
 dev = [
+  "build>=1.2,<2",
   "pytest>=8,<10",
   "pytest-cov>=6,<8",
+  "ruff>=0.12,<1",
 ]
 
 [project.scripts]
@@ -34,5 +47,17 @@ Issues = "https://github.com/LiamVDB1/opencodelab/issues"
 where = ["src"]
 
 [tool.pytest.ini_options]
-addopts = "-q"
+addopts = "-q --cov=opencodelab --cov-report=term-missing --cov-fail-under=80"
 testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["opencodelab"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100

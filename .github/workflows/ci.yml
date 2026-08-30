@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Test with coverage
+        env:
+          PYTHONPATH: src
+        run: >-
+          uv run --no-project --with pytest --with pytest-cov --with 'modal>=1.5.4,<2'
+          --with keyring --with platformdirs python -m pytest
+
+  minimum-modal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Test declared Modal lower bound
+        env:
+          PYTHONPATH: src
+        run: >-
+          uv run --no-project --with pytest --with pytest-cov --with 'modal==1.5.4'
+          --with keyring --with platformdirs python -m pytest
+
+  quality-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Ruff
+        run: uv run --no-project --with ruff ruff check .
+      - name: Build distributions
+        run: uv run --no-project --with build python -m build
+      - name: Check distributions
+        run: uv run --no-project --with twine twine check dist/*
+
+  minimum-build-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Build with declared minimum setuptools
+        run: >-
+          uv run --no-project --with 'setuptools==77.0.0' --with 'build>=1.2,<2'
+          python -m build --no-isolation
