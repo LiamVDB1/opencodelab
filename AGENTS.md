@@ -2,6 +2,10 @@
 
 OpenCodeLab is meant to be installed and configured by coding agents as well as humans. If a user asks you to install this repository, use the shipped CLI and documentation rather than reimplementing the integration from scratch.
 
+## Federation Git discipline
+
+This is a registered Operating Workspace. The federation `GIT-CONTRACT.md` is authoritative for durable Git work. Before substantial edits, run `workspace git-check opencodelab --phase start --fetch` when available. `main` is the integration branch. A task branch is temporary owned work: integrate and push it before completion, or leave a clean pushed explicit handoff. Before claiming completion, run `workspace git-check opencodelab --phase finish --fetch`. Never mix or destroy unrelated existing changes merely to make Git clean.
+
 ## Installation behavior
 
 - Preserve the user's existing OpenCode configuration. OpenCodeLab uses an `OPENCODE_CONFIG` overlay and must not replace the user's normal config.

@@ -6,8 +6,8 @@
   "status": "active",
   "purpose": "Provide a secure, portable CLI that runs compatible Hugging Face models inside OpenCode on scale-to-zero Modal GPUs.",
   "canonical": {
-    "host": "Liams-MacBook-Pro",
-    "path": "/Users/liamvdb/Workspace/Active/Personal/opencodelab",
+    "host": "macserver",
+    "path": "/home/liamvdb/Workspace/Active/Personal/opencodelab",
     "access": "local",
     "writer_policy": "This repository owns OpenCodeLab code, tests, packaging, documentation, and release truth."
   },
@@ -18,8 +18,14 @@
       "public documentation and release evidence"
     ],
     "defers_to": [
-      {"topic": "coding work-order lifecycle", "authority": "Code Operations"},
-      {"topic": "external posting and partner applications", "authority": "Liam"}
+      {
+        "topic": "coding work-order lifecycle",
+        "authority": "Code Operations"
+      },
+      {
+        "topic": "external posting and partner applications",
+        "authority": "Liam"
+      }
     ],
     "never_owns": [
       "Modal or OpenCode policy",
@@ -29,18 +35,42 @@
     ]
   },
   "bootstrap": {
-    "agent": ["AGENTS.md"],
-    "human": ["README.md"]
+    "agent": [
+      "AGENTS.md"
+    ],
+    "human": [
+      "README.md"
+    ]
   },
   "state": {
     "entrypoints": [
-      {"kind": "command", "value": "git status --short --branch", "description": "Inspect current repository state."},
-      {"kind": "command", "value": "PYTHONPATH=src uv run --no-project --with pytest --with modal --with keyring --with platformdirs python -m pytest -q", "description": "Run the local non-inference test suite."}
+      {
+        "kind": "command",
+        "value": "git status --short --branch",
+        "description": "Inspect current repository state."
+      },
+      {
+        "kind": "command",
+        "value": "PYTHONPATH=src uv run --no-project --with pytest --with modal --with keyring --with platformdirs python -m pytest -q",
+        "description": "Run the local non-inference test suite."
+      }
     ]
   },
   "operations": [
-    {"id": "test", "kind": "command", "entrypoint": "PYTHONPATH=src uv run --no-project --with pytest --with modal --with keyring --with platformdirs python -m pytest -q", "effect": "read-only", "description": "Run tests without Modal deployment or inference."},
-    {"id": "build", "kind": "command", "entrypoint": "uv run --no-project --with build python -m build", "effect": "workspace-write", "description": "Build wheel and sdist locally."}
+    {
+      "id": "test",
+      "kind": "command",
+      "entrypoint": "PYTHONPATH=src uv run --no-project --with pytest --with modal --with keyring --with platformdirs python -m pytest -q",
+      "effect": "read-only",
+      "description": "Run tests without Modal deployment or inference."
+    },
+    {
+      "id": "build",
+      "kind": "command",
+      "entrypoint": "uv run --no-project --with build python -m build",
+      "effect": "workspace-write",
+      "description": "Build wheel and sdist locally."
+    }
   ],
   "approvals": {
     "internal_reversible_coding_and_tooling": "Operating Partner or Code Operations may authorize internally.",
@@ -52,12 +82,29 @@
     "promotion_policy": "Keep reusable repository execution rules local and concise."
   },
   "replication": {
-    "strategy": "GitHub is the public code and release mirror; the main Mac is the canonical working copy for this synchronization period.",
-    "canonical_writer": "opencodelab on Liams-MacBook-Pro",
-    "excludes": ["credentials", "generated secrets", "build caches", "provider-native session history"]
+    "strategy": "Git coordinates durable product source across editable checkouts under the federation GIT-CONTRACT.md; GitHub remains the public code and release remote.",
+    "canonical_writer": "origin/main integration history; macserver is the canonical runtime/discovery checkout",
+    "excludes": [
+      "credentials",
+      "generated secrets",
+      "build caches",
+      "provider-native session history"
+    ],
+    "client_access": [
+      "SSH/Remote SSH for commands, Git, agents, builds, and tests",
+      "Tailscale-only SMB for Finder and media inspection"
+    ]
   },
   "interfaces": {
-    "provides": ["OpenCodeLab CLI", "Modal deployment template", "OpenCode provider overlay"],
-    "consumes": ["Modal CLI and service", "OpenCode CLI", "Hugging Face model identifiers"]
+    "provides": [
+      "OpenCodeLab CLI",
+      "Modal deployment template",
+      "OpenCode provider overlay"
+    ],
+    "consumes": [
+      "Modal CLI and service",
+      "OpenCode CLI",
+      "Hugging Face model identifiers"
+    ]
   }
 }
