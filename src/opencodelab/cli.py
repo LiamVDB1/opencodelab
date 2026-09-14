@@ -54,7 +54,7 @@ GPU_PRICING = {
     "L40S": {"per_second": 0.000542, "per_hour": 1.9512},
     "H100": {"per_second": 0.001097, "per_hour": 3.9492},
 }
-PRICING_AS_OF = "2026-08-30"
+PRICING_AS_OF = "2026-09-14"
 PRICING_URL = "https://modal.com/pricing"
 
 

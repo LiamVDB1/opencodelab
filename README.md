@@ -105,7 +105,7 @@ opencodelab gpu L40S
 
 Changing the configured GPU redeploys the Modal app. The expensive GPU is used when the model actually runs; OpenCodeLab still keeps `max_containers=1` and the configured scale-down window.
 
-As of **2026-08-30**, Modal's public pricing lists:
+As of **2026-09-14**, Modal's public pricing lists:
 
 | GPU | Price | $30 raw GPU time* |
 | --- | ---: | ---: |

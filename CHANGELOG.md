@@ -4,9 +4,14 @@ All notable changes to OpenCodeLab are documented here.
 
 ## Unreleased
 
-- Accept an optional literal `show` for `opencodelab config`, matching documented usage in the help text and README.
+## 0.2.1 - 2026-09-14
+
+- Re-verified Modal's public L40S and H100 rates and refreshed the CLI/README pricing snapshot date; the listed rates are unchanged.
+- Publish the current hardened 0.2.x line from a green build after correcting the CI minimum-setuptools pin.
 
 ## 0.2.0 - 2026-08-30
+
+- Accept an optional literal `show` for `opencodelab config`, matching documented usage in the help text and README.
 
 - Invoke Modal through the absolute console script of the active environment with a scrubbed subprocess environment, so a hostile `modal.py`/`modal` package in the user's project can never be imported.
 - Cryptographically bind each profile's deployed endpoint origin to its client credential with an HMAC stored in local config, fail closed on missing/legacy/tampered bindings, and verify before launch, config generation, GPU redeploys, and doctor.
