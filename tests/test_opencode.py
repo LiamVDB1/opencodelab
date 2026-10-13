@@ -7,6 +7,7 @@ import pytest
 
 from opencodelab.config import ConfigStore, Profile, bind_profile_endpoint, modal_endpoint_label
 from opencodelab.opencode import (
+    PROVIDER_TIMEOUT_MS,
     build_opencode_args,
     compaction_settings,
     launch_opencode,
@@ -43,6 +44,16 @@ def test_overlay_uses_env_secret_not_literal_key():
     )
     assert provider["options"]["apiKey"] == "{env:OPENCODELAB_API_KEY}"
     assert provider["models"]["gubernac/qwen3.8-27b-unc-fp8"]["limit"]["context"] == 65536
+
+
+def test_overlay_waits_out_modal_cold_start():
+    # Regression: OpenCode's 5-minute header timeout fired during a cold start,
+    # so the TUI sat on "Continue" while it retried against a booting server.
+    overlay = json.loads(render_overlay(_profile(), "test-key"))
+    options = overlay["provider"]["opencodelab"]["options"]
+    assert PROVIDER_TIMEOUT_MS == 1_200_000
+    for key in ("timeout", "headerTimeout", "chunkTimeout"):
+        assert options[key] == PROVIDER_TIMEOUT_MS
 
 
 def test_overlay_reserves_scaled_output_and_bounds_compaction():

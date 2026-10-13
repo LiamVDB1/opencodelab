@@ -4,6 +4,7 @@ All notable changes to OpenCodeLab are documented here.
 
 ## Unreleased
 
+- Wait up to 20 minutes for response headers (`headerTimeout`) as well as for the full request and between chunks. OpenCode's 5-minute default could expire during a Modal cold start, which left the TUI retrying against a server that was still loading.
 - Accept Modal's regional `<source>--<label>.<region>.modal.run` endpoints in local validation and in the generated gateway, and render Modal CLI output at 1000 columns so long endpoint URLs are not wrapped mid-hostname. Unknown or extra intermediate labels are still rejected.
 - Enable OpenCode's built-in `websearch` tool (Exa) for OpenCodeLab launches by setting `OPENCODE_ENABLE_EXA=1` unless the user already set it; `OPENCODE_ENABLE_EXA=false` opts out.
 

@@ -47,6 +47,9 @@ def scrub_child_environment(env: dict[str, str]) -> dict[str, str]:
 
 
 MAX_OUTPUT_TOKENS = 16384
+# Matches the Modal startup timeout: a cold start (weight load plus torch.compile)
+# can take longer than OpenCode's 5-minute default wait for response headers.
+PROVIDER_TIMEOUT_MS = 20 * 60 * 1000
 
 
 def output_token_limit(max_model_len: int) -> int:
@@ -105,8 +108,9 @@ def render_overlay(profile: Profile, api_key: str) -> str:
                 "options": {
                     "baseURL": f"{endpoint}/v1",
                     "apiKey": "{env:OPENCODELAB_API_KEY}",
-                    "timeout": 1200000,
-                    "chunkTimeout": 1200000,
+                    "timeout": PROVIDER_TIMEOUT_MS,
+                    "headerTimeout": PROVIDER_TIMEOUT_MS,
+                    "chunkTimeout": PROVIDER_TIMEOUT_MS,
                 },
                 "models": {profile.model_id: model},
             }

@@ -219,7 +219,7 @@ When OpenCode starts, OpenCodeLab sets `OPENCODE_CONFIG` to that overlay and `OP
 
 It also sets `OPENCODE_ENABLE_EXA=1` for that process, unless you already set it, so OpenCode exposes its built-in `websearch` tool (backed by Exa's hosted search) alongside `webfetch`. Search queries go to Exa. Set `OPENCODE_ENABLE_EXA=false` to turn it off.
 
-The overlay also bounds OpenCode's compaction (old tool outputs pruned, at most one recent turn kept verbatim) and scales the output reserve to the context window, so long agentic sessions compact once instead of looping on a full window.
+The overlay also bounds OpenCode's compaction (old tool outputs pruned, at most one recent turn kept verbatim) and scales the output reserve to the context window, so long agentic sessions compact once instead of looping on a full window. Provider timeouts are raised to 20 minutes so the first request after a cold start waits for the server instead of timing out and retrying.
 
 OpenCodeLab does **not** replace your global OpenCode config.
 
