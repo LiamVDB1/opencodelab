@@ -4,6 +4,8 @@ All notable changes to OpenCodeLab are documented here.
 
 ## Unreleased
 
+- Complete setup in Modal workspaces without RBAC. Modal 1.6 rejects environment grants for workspace-wide proxy tokens ("Token is not environment-scoped"); setup now treats that as the documented non-RBAC case, keeps the token server-side in the gateway, and still fails closed on any other grant error. Setup failures now include the underlying cause.
+
 - Fix an OpenCode compaction loop on small context windows: the generated overlay now prunes old tool outputs, keeps at most one recent turn (an eighth of the window) verbatim through compaction, and reserves an eighth of the window for output instead of a flat 16K. Previously a compacted session whose preserved tail held large tool outputs could exceed vLLM's `max_model_len` on every retry and compact forever.
 - Default the Qwen3.8 preset to a 131,072-token context. Only 16 of its 64 layers use full attention, so the larger window needs about 8 GB of BF16 KV cache on the L40S.
 - Raise vLLM `--max-num-batched-tokens` from 2048 to 8192 so long prompts prefill in fewer chunks after cache misses.

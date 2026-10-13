@@ -331,17 +331,25 @@ def create_modal_proxy_token(
         raise RuntimeError(f"{exc}; newly created proxy token(s) were revoked") from exc
 
 
-def allow_modal_proxy_token(token_id: str, environment_name: str) -> None:
+def allow_modal_proxy_token(token_id: str, environment_name: str) -> bool:
+    """Grant the token to one Environment; return False when the workspace has no RBAC.
+
+    Without RBAC, Modal proxy tokens are workspace-wide and cannot be scoped, and
+    Modal rejects the grant with "Token is not environment-scoped".
+    """
     result = _run_modal(
         modal_command("workspace", "proxy-tokens", "allow", token_id, environment_name),
         text=True,
         capture_output=True,
         check=False,
     )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"Could not authorize the Modal proxy token for environment {environment_name!r}"
-        )
+    if result.returncode == 0:
+        return True
+    if "not environment-scoped" in f"{result.stdout or ''}\n{result.stderr or ''}":
+        return False
+    raise RuntimeError(
+        f"Could not authorize the Modal proxy token for environment {environment_name!r}"
+    )
 
 
 def delete_modal_proxy_token(token_id: str) -> None:

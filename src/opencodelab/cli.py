@@ -297,7 +297,11 @@ def cmd_setup(argv: list[str]) -> int:
             )
             profile = replace(profile, proxy_token_id=proxy_token_id)
             secret_location = secret_store.set_api_key(profile.name, api_key)
-            allow_modal_proxy_token(proxy_token_id, profile.environment_name)
+            if not allow_modal_proxy_token(proxy_token_id, profile.environment_name):
+                print(
+                    "Note: this Modal workspace has no RBAC, so the proxy token is "
+                    "workspace-wide. It stays server-side in the gateway's Modal Secret."
+                )
             create_gateway_secret(
                 profile.gateway_secret_name,
                 api_key,
@@ -307,7 +311,7 @@ def cmd_setup(argv: list[str]) -> int:
             )
         except (OSError, RuntimeError) as exc:
             raise RuntimeError(
-                f"Setup did not complete. Recovery profile {profile.name!r} was retained; "
+                f"Setup did not complete ({exc}). Recovery profile {profile.name!r} was retained; "
                 "run `opencodelab remove --yes` before trying again."
             ) from exc
 
@@ -349,7 +353,7 @@ def cmd_setup(argv: list[str]) -> int:
         raise
     except (OSError, RuntimeError, ValueError) as exc:
         raise RuntimeError(
-            f"Setup did not complete. Recovery profile {profile.name!r} was retained; "
+            f"Setup did not complete ({exc}). Recovery profile {profile.name!r} was retained; "
             "run `opencodelab remove --yes` before trying again."
         ) from exc
 

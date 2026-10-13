@@ -271,7 +271,7 @@ def test_environment_creation_and_proxy_grant_are_explicit(monkeypatch):
 
     monkeypatch.setattr("opencodelab.modal_client.subprocess.run", fake_run)
     create_modal_environment("opencodelab-model")
-    allow_modal_proxy_token("wk-model", "opencodelab-model")
+    assert allow_modal_proxy_token("wk-model", "opencodelab-model") is True
 
     assert commands[0][-3:] == ["environment", "create", "opencodelab-model"]
     assert commands[1][-5:] == [
@@ -281,6 +281,25 @@ def test_environment_creation_and_proxy_grant_are_explicit(monkeypatch):
         "wk-model",
         "opencodelab-model",
     ]
+
+
+def test_proxy_grant_is_skipped_for_workspace_wide_tokens(monkeypatch):
+    # Regression: Modal 1.6 rejects grants in workspaces without RBAC, where proxy
+    # tokens are workspace-wide; setup used to abort and leave a recovery profile.
+    result = subprocess.CompletedProcess(
+        ["modal"], 1, stdout="", stderr="Error: Token is not environment-scoped"
+    )
+    monkeypatch.setattr("opencodelab.modal_client.subprocess.run", lambda *a, **k: result)
+
+    assert allow_modal_proxy_token("wk-model", "opencodelab-model") is False
+
+
+def test_other_proxy_grant_failures_still_fail_closed(monkeypatch):
+    result = subprocess.CompletedProcess(["modal"], 1, stdout="", stderr="Environment not found")
+    monkeypatch.setattr("opencodelab.modal_client.subprocess.run", lambda *a, **k: result)
+
+    with pytest.raises(RuntimeError, match="Could not authorize the Modal proxy token"):
+        allow_modal_proxy_token("wk-model", "opencodelab-model")
 
 
 def test_deploy_failure_is_actionable_and_does_not_parse_endpoint(monkeypatch, tmp_path: Path):

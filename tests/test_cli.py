@@ -142,7 +142,7 @@ def test_setup_success_persists_only_after_deployment(monkeypatch, tmp_path: Pat
             ("wk-model-token", "ws-model-secret"),
         )[1],
     )
-    monkeypatch.setattr("opencodelab.cli.allow_modal_proxy_token", lambda *a: None)
+    monkeypatch.setattr("opencodelab.cli.allow_modal_proxy_token", lambda *a: True)
     monkeypatch.setattr(
         "opencodelab.cli.create_gateway_secret",
         lambda name, key, **kwargs: calls.update(gateway_name=name, gateway_key=key),
@@ -172,6 +172,40 @@ def test_setup_success_persists_only_after_deployment(monkeypatch, tmp_path: Pat
     assert str(calls["stored_key"]) not in (tmp_path / "opencode" / "model.json").read_text(encoding="utf-8")
 
 
+def test_setup_completes_in_workspace_without_rbac(monkeypatch, tmp_path: Path, capsys):
+    monkeypatch.setenv("OPENCODELAB_HOME", str(tmp_path))
+
+    class FakeSecrets:
+        def __init__(self, root):
+            pass
+
+        def get_api_key(self, profile_name, **kwargs):
+            return None
+
+        def set_api_key(self, profile_name, value):
+            return "test keyring"
+
+    monkeypatch.setattr("opencodelab.cli.SecretStore", FakeSecrets)
+    monkeypatch.setattr("opencodelab.cli.ensure_modal_auth", lambda interactive: True)
+    monkeypatch.setattr("opencodelab.cli.create_modal_environment", lambda name: None)
+    monkeypatch.setattr(
+        "opencodelab.cli.create_modal_proxy_token",
+        lambda **kwargs: ("wk-model-token", "ws-model-secret"),
+    )
+    monkeypatch.setattr("opencodelab.cli.allow_modal_proxy_token", lambda *a: False)
+    monkeypatch.setattr("opencodelab.cli.create_gateway_secret", lambda *a, **k: None)
+    monkeypatch.setattr("opencodelab.cli.create_modal_secret", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "opencodelab.cli.deploy_modal_app",
+        lambda *a, **k: f"https://workspace--{modal_endpoint_label('model')}.modal.run",
+    )
+
+    assert cmd_setup(["owner/model", "--yes"]) == 0
+
+    assert "proxy token is workspace-wide" in capsys.readouterr().out
+    assert ConfigStore(tmp_path).load().profiles["model"].endpoint
+
+
 def test_setup_deploy_failure_retains_recovery_profile(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("OPENCODELAB_HOME", str(tmp_path))
 
@@ -195,7 +229,7 @@ def test_setup_deploy_failure_retains_recovery_profile(monkeypatch, tmp_path: Pa
             ("wk-model-token", "ws-model-secret"),
         )[1],
     )
-    monkeypatch.setattr("opencodelab.cli.allow_modal_proxy_token", lambda *a: None)
+    monkeypatch.setattr("opencodelab.cli.allow_modal_proxy_token", lambda *a: True)
     monkeypatch.setattr("opencodelab.cli.create_gateway_secret", lambda *a, **k: None)
     monkeypatch.setattr("opencodelab.cli.create_modal_secret", lambda *a, **k: None)
     monkeypatch.setattr(
@@ -727,7 +761,7 @@ def test_setup_post_deploy_save_failure_reports_live_deployment(
             ("wk-model-token", "ws-model-secret"),
         )[1],
     )
-    monkeypatch.setattr("opencodelab.cli.allow_modal_proxy_token", lambda *a: None)
+    monkeypatch.setattr("opencodelab.cli.allow_modal_proxy_token", lambda *a: True)
     monkeypatch.setattr("opencodelab.cli.create_gateway_secret", lambda *a, **k: None)
     monkeypatch.setattr("opencodelab.cli.create_modal_secret", lambda *a, **k: None)
     monkeypatch.setattr(
