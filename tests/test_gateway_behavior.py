@@ -289,6 +289,27 @@ def test_gateway_forwards_proxy_credentials_on_trusted_modal_target(gateway):
     assert state["client_closed"]
 
 
+def test_gateway_strips_modal_response_headers(gateway):
+    # Regression: after a cold start the model endpoint answers with a
+    # modal-function-call-id header; relaying it made Modal fail the request with 500.
+    state, _, call = gateway
+    state["model_url"] = MODEL_MODAL_RUN
+    state["responses"] = [
+        sys.modules["httpx"].Response(
+            200,
+            {"content-type": "text/event-stream", "modal-function-call-id": "fc-123"},
+            content=b"UPSTREAM",
+        )
+    ]
+    result = call(
+        "chat/completions",
+        _IncomingRequest(headers={**AUTH, "content-length": "2"}, body=b"{}"),
+    )
+    assert result.status_code == 200
+    assert result.headers == {"content-type": "text/event-stream"}
+    assert _consume(result) == b"UPSTREAM"
+
+
 def _upstream_response():
     return sys.modules["httpx"].Response(
         200, {"content-type": "application/json"}, content=b"UPSTREAM"

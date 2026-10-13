@@ -290,6 +290,9 @@ def gateway():
             key: value
             for key, value in upstream.headers.items()
             if key.lower() not in response_excluded
+            # Modal rejects responses that carry its own headers, e.g. the
+            # modal-function-call-id the model endpoint adds after a cold start.
+            and not key.lower().startswith("modal-")
         }}
 
         async def stream_upstream():
