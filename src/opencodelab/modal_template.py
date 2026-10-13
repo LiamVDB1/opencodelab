@@ -131,7 +131,7 @@ def serve_model():
         "--max-num-seqs",
         "1",
         "--max-num-batched-tokens",
-        "2048",
+        "8192",
         "--enable-prefix-caching",
 {optional}    ]
     subprocess.Popen(cmd)

@@ -46,6 +46,36 @@ def scrub_child_environment(env: dict[str, str]) -> dict[str, str]:
     }
 
 
+MAX_OUTPUT_TOKENS = 16384
+
+
+def output_token_limit(max_model_len: int) -> int:
+    """Reserve an eighth of the window for output, capped at 16K.
+
+    vLLM rejects any request whose prompt plus ``max_tokens`` exceeds the served
+    context, and OpenCode sends this limit as ``max_tokens`` on every turn, so a
+    large reserve directly shrinks the usable prompt.
+    """
+    return min(MAX_OUTPUT_TOKENS, max(max_model_len // 8, min(4096, max_model_len // 4)))
+
+
+def compaction_settings(max_model_len: int) -> dict[str, object]:
+    """Keep post-compaction prompts well under the served context.
+
+    OpenCode preserves recent turns verbatim through compaction. With large tool
+    outputs in that tail, the compacted prompt can still exceed the window, which
+    makes every retry overflow and compact again.
+    """
+    output = output_token_limit(max_model_len)
+    return {
+        "auto": True,
+        "prune": True,
+        "tail_turns": 1,
+        "preserve_recent_tokens": max_model_len // 8,
+        "reserved": output + max_model_len // 16,
+    }
+
+
 def render_overlay(profile: Profile, api_key: str) -> str:
     if not profile.endpoint:
         raise ValueError(f"Profile {profile.name!r} has not been deployed yet")
@@ -58,7 +88,7 @@ def render_overlay(profile: Profile, api_key: str) -> str:
         "name": f"{profile.model_id} ({profile.gpu})",
         "limit": {
             "context": profile.max_model_len,
-            "output": min(16384, profile.max_model_len),
+            "output": output_token_limit(profile.max_model_len),
         },
     }
     if profile.reasoning_parser:
@@ -67,6 +97,7 @@ def render_overlay(profile: Profile, api_key: str) -> str:
 
     payload = {
         "$schema": "https://opencode.ai/config.json",
+        "compaction": compaction_settings(profile.max_model_len),
         "provider": {
             "opencodelab": {
                 "npm": "@ai-sdk/openai-compatible",

@@ -21,6 +21,9 @@ _VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+_-]{0,31}$")
 _ENDPOINT_BINDING = re.compile(r"^hmac-sha256:[0-9a-f]{64}$")
 
 
+SUPPORTED_GPUS = frozenset({"L40S", "A100-80GB", "H100", "H200"})
+
+
 class ConfigError(ValueError):
     """Raised when OpenCodeLab's local configuration cannot be used safely."""
 
@@ -157,7 +160,7 @@ class ConfigStore:
                 normalized_model_id = normalize_huggingface_model(profile.model_id)
                 if normalized_model_id != profile.model_id:
                     raise ValueError(f"profile {name!r} has a non-canonical model id")
-                if profile.gpu not in {"L40S", "H100"}:
+                if profile.gpu not in SUPPORTED_GPUS:
                     raise ValueError(f"profile {name!r} uses unsupported GPU {profile.gpu!r}")
                 if (
                     type(profile.max_model_len) is not int

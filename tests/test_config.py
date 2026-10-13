@@ -48,6 +48,30 @@ def test_config_round_trip_without_secrets(tmp_path: Path):
     assert raw["profiles"]["qwen38"]["endpoint_binding"].startswith("hmac-sha256:")
 
 
+@pytest.mark.parametrize("gpu", ["A100-80GB", "H200"])
+def test_config_round_trips_newer_single_gpu_profiles(tmp_path: Path, gpu: str):
+    store = ConfigStore(tmp_path)
+    profile = bind_profile_endpoint(Profile(
+        name="qwen38",
+        model_id="gubernac/qwen3.8-27b-unc-fp8",
+        gpu=gpu,
+        max_model_len=131072,
+        idle_timeout_seconds=90,
+        endpoint=f"https://workspace--{modal_endpoint_label('qwen38')}.modal.run",
+        environment_name="opencodelab-qwen38",
+        app_name="opencodelab-qwen38",
+        secret_name="ocl-qwen38-vllm",
+        gateway_secret_name="ocl-qwen38-gateway",
+        workspace_id="ws-test-workspace",
+        proxy_token_id="wk-test-token",
+    ), "client-key")
+    config = LabConfig(default_profile="qwen38", profiles={"qwen38": profile})
+
+    store.save(config)
+
+    assert store.load() == config
+
+
 def test_generated_files_live_under_config_home(tmp_path: Path):
     store = ConfigStore(tmp_path)
     assert store.deployment_path("abc") == tmp_path / "deployments" / "abc.py"

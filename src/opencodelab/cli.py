@@ -52,9 +52,11 @@ _PARSER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 GPU_PRICING = {
     "L40S": {"per_second": 0.000542, "per_hour": 1.9512},
+    "A100-80GB": {"per_second": 0.000694, "per_hour": 2.4984},
     "H100": {"per_second": 0.001097, "per_hour": 3.9492},
+    "H200": {"per_second": 0.001261, "per_hour": 4.5396},
 }
-PRICING_AS_OF = "2026-09-14"
+PRICING_AS_OF = "2026-10-13"
 PRICING_URL = "https://modal.com/pricing"
 
 
@@ -83,7 +85,10 @@ def _parser_value(value: str, inferred: str | None) -> str | None:
 def _validate_gpu(value: str) -> str:
     normalized = value.upper()
     if normalized not in GPU_PRICING:
-        raise ValueError("GPU must be L40S or H100; other and multi-GPU selectors are not supported")
+        choices = ", ".join(GPU_PRICING)
+        raise ValueError(
+            f"GPU must be one of {choices}; other and multi-GPU selectors are not supported"
+        )
     return normalized
 
 
@@ -110,7 +115,7 @@ def _build_profile(args: argparse.Namespace) -> Profile:
     inferred = infer_model_settings(model_id)
     profile_name = safe_slug(args.name or model_id.split("/", 1)[1])
     gpu = _validate_gpu(args.gpu)
-    context = args.context or (65536 if "qwen3.8" in model_id.lower() else 32768)
+    context = args.context or (131072 if "qwen3.8" in model_id.lower() else 32768)
     if context < 1024:
         raise ValueError("Context must be at least 1024 tokens")
     if context > 1_000_000:
@@ -157,8 +162,8 @@ def _setup_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("model", nargs="?", default=DEFAULT_MODEL, help="Hugging Face owner/model or model URL")
     parser.add_argument("--name", help="Local profile name; defaults to the model name")
-    parser.add_argument("--gpu", default=DEFAULT_GPU, help="Modal GPU selector (default: L40S; try H100 for lower latency)")
-    parser.add_argument("--context", type=int, help="Maximum model context; defaults to 65K for Qwen3.8, 32K otherwise")
+    parser.add_argument("--gpu", default=DEFAULT_GPU, help="Modal GPU selector: L40S (default), A100-80GB, H100, or H200")
+    parser.add_argument("--context", type=int, help="Maximum model context; defaults to 128K for Qwen3.8, 32K otherwise")
     parser.add_argument("--idle-timeout", type=int, default=90, help="Scale-to-zero window in seconds (default: 90)")
     parser.add_argument("--tool-call-parser", default="auto", help="vLLM parser: auto, none, or an explicit parser name")
     parser.add_argument("--reasoning-parser", default="auto", help="vLLM parser: auto, none, or an explicit parser name")
@@ -371,7 +376,7 @@ def _resolve_profile(config: LabConfig, name: str | None = None) -> Profile:
 
 def cmd_gpu(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="opencodelab gpu", description="Switch the GPU for an existing profile and redeploy it.")
-    parser.add_argument("gpu", help="Modal GPU selector, e.g. L40S or H100")
+    parser.add_argument("gpu", help="Modal GPU selector: L40S, A100-80GB, H100, or H200")
     parser.add_argument("--profile")
     parser.add_argument("--yes", action="store_true")
     args = parser.parse_args(argv)

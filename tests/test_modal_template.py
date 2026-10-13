@@ -55,6 +55,7 @@ def test_rendered_modal_app_is_generic_and_cost_bounded():
     assert "IDLE_TIMEOUT_SECONDS = 90" in source
     assert "scaledown_window=IDLE_TIMEOUT_SECONDS" in source
     assert '"--max-model-len", str(MAX_MODEL_LEN)' in source
+    assert '"--max-num-batched-tokens",\n        "8192",' in source
     assert '"--tool-call-parser"' in source
     assert '"qwen3_coder"' in source
     assert '"--reasoning-parser"' in source

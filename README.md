@@ -89,7 +89,7 @@ opencodelab run "inspect this repo and explain the architecture"
 
 ## GPU choice
 
-L40S is the default because it is a strong price/performance option for inference and the tested 27B FP8 model fits comfortably in 48 GB VRAM.
+L40S is the default because it is a strong price/performance option for inference and the tested 27B FP8 model fits comfortably in 48 GB VRAM. OpenCodeLab also accepts `A100-80GB` and `H200` for single-GPU models that need more memory; those two have not been measured with the Qwen3.8 preset.
 
 If you care more about latency than credit life, switch the same profile to H100:
 
@@ -105,12 +105,14 @@ opencodelab gpu L40S
 
 Changing the configured GPU redeploys the Modal app. The expensive GPU is used when the model actually runs; OpenCodeLab still keeps `max_containers=1` and the configured scale-down window.
 
-As of **2026-09-14**, Modal's public pricing lists:
+As of **2026-10-13**, Modal's public pricing lists:
 
 | GPU | Price | $30 raw GPU time* |
 | --- | ---: | ---: |
 | L40S | $0.000542/sec (~$1.95/hr) | ~15.4 hours/month |
+| A100-80GB | $0.000694/sec (~$2.50/hr) | ~12.0 hours/month |
 | H100 | $0.001097/sec (~$3.95/hr) | ~7.6 hours/month |
+| H200 | $0.001261/sec (~$4.54/hr) | ~6.6 hours/month |
 
 Modal's Starter plan currently advertises **$30/month in free compute credits**. *These are raw GPU-hour divisions, not a promise of usable session time:* CPU, memory, image builds, cold-start runtime, storage beyond included allowances, and other Modal resources can also consume credits. Check [Modal pricing](https://modal.com/pricing) before relying on a number in this README.
 

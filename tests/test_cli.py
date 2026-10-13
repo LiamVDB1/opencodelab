@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from opencodelab.cli import (
+    GPU_PRICING,
     _dispatch,
     _extract_profile,
     _validate_env_name,
@@ -22,6 +23,7 @@ from opencodelab.cli import (
     main,
 )
 from opencodelab.config import (
+    SUPPORTED_GPUS,
     ConfigStore,
     LabConfig,
     Profile,
@@ -58,7 +60,13 @@ def _profile(name: str = "model", *, gpu: str = "L40S", endpoint: str | None = N
 
 def test_single_gpu_selectors_are_allowed():
     assert _validate_gpu("L40S") == "L40S"
+    assert _validate_gpu("a100-80gb") == "A100-80GB"
     assert _validate_gpu("H100") == "H100"
+    assert _validate_gpu("h200") == "H200"
+
+
+def test_every_priced_gpu_is_accepted_by_persisted_config():
+    assert set(GPU_PRICING) == SUPPORTED_GPUS
 
 
 def test_multi_gpu_selector_is_rejected_until_tensor_parallel_is_supported():
@@ -67,7 +75,7 @@ def test_multi_gpu_selector_is_rejected_until_tensor_parallel_is_supported():
 
 
 def test_only_documented_gpu_choices_are_allowed():
-    with pytest.raises(ValueError, match="L40S or H100"):
+    with pytest.raises(ValueError, match="GPU must be one of L40S, A100-80GB, H100, H200"):
         _validate_gpu("A100")
 
 
@@ -81,6 +89,16 @@ def test_parser_names_reject_vllm_argument_injection(value: str):
 def test_environment_variable_names_are_validated(value: str):
     with pytest.raises(ValueError):
         _validate_env_name(value)
+
+
+def test_qwen38_setup_defaults_to_128k_context(monkeypatch, tmp_path: Path, capsys):
+    monkeypatch.setenv("OPENCODELAB_HOME", str(tmp_path / "home"))
+
+    assert cmd_setup(["--dry-run"]) == 0
+
+    plan = capsys.readouterr().out
+    assert '"model": "gubernac/qwen3.8-27b-unc-fp8"' in plan
+    assert '"context": 131072' in plan
 
 
 def test_setup_dry_run_is_side_effect_free_and_discloses_cost_snapshot(monkeypatch, tmp_path: Path, capsys):

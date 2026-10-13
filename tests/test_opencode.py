@@ -8,7 +8,9 @@ import pytest
 from opencodelab.config import ConfigStore, Profile, bind_profile_endpoint, modal_endpoint_label
 from opencodelab.opencode import (
     build_opencode_args,
+    compaction_settings,
     launch_opencode,
+    output_token_limit,
     render_overlay,
     scrub_child_environment,
 )
@@ -41,6 +43,38 @@ def test_overlay_uses_env_secret_not_literal_key():
     )
     assert provider["options"]["apiKey"] == "{env:OPENCODELAB_API_KEY}"
     assert provider["models"]["gubernac/qwen3.8-27b-unc-fp8"]["limit"]["context"] == 65536
+
+
+def test_overlay_reserves_scaled_output_and_bounds_compaction():
+    overlay = json.loads(render_overlay(_profile(), "test-key"))
+    limit = overlay["provider"]["opencodelab"]["models"]["gubernac/qwen3.8-27b-unc-fp8"]["limit"]
+    assert limit == {"context": 65536, "output": 8192}
+    assert overlay["compaction"] == {
+        "auto": True,
+        "prune": True,
+        "tail_turns": 1,
+        "preserve_recent_tokens": 8192,
+        "reserved": 12288,
+    }
+
+
+@pytest.mark.parametrize(
+    ("context", "expected"),
+    [(1024, 256), (32768, 4096), (65536, 8192), (131072, 16384), (262144, 16384)],
+)
+def test_output_limit_scales_with_context(context: int, expected: int):
+    assert output_token_limit(context) == expected
+
+
+@pytest.mark.parametrize("context", [32768, 65536, 131072, 262144])
+def test_compacted_prompt_leaves_room_for_fixed_overhead(context: int):
+    # Regression: a verbatim compaction tail of large tool outputs plus ~20K tokens
+    # of system prompt and tool schemas used to exceed context - output on every
+    # retry, so OpenCode compacted in a loop without ever completing a turn.
+    settings = compaction_settings(context)
+    usable_prompt = context - output_token_limit(context)
+    assert settings["preserve_recent_tokens"] <= usable_prompt // 4
+    assert settings["reserved"] < usable_prompt
 
 
 def test_run_command_injects_model_after_run():

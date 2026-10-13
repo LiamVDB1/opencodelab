@@ -4,6 +4,11 @@ All notable changes to OpenCodeLab are documented here.
 
 ## Unreleased
 
+- Fix an OpenCode compaction loop on small context windows: the generated overlay now prunes old tool outputs, keeps at most one recent turn (an eighth of the window) verbatim through compaction, and reserves an eighth of the window for output instead of a flat 16K. Previously a compacted session whose preserved tail held large tool outputs could exceed vLLM's `max_model_len` on every retry and compact forever.
+- Default the Qwen3.8 preset to a 131,072-token context. Only 16 of its 64 layers use full attention, so the larger window needs about 8 GB of BF16 KV cache on the L40S.
+- Raise vLLM `--max-num-batched-tokens` from 2048 to 8192 so long prompts prefill in fewer chunks after cache misses.
+- Accept `A100-80GB` and `H200` GPU selectors and refresh the dated Modal price snapshot to 2026-10-13.
+
 ## 0.2.1 - 2026-09-14
 
 - Re-verified Modal's public L40S and H100 rates and refreshed the CLI/README pricing snapshot date; the listed rates are unchanged.
