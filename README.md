@@ -217,6 +217,10 @@ It generates two local runtime artifacts outside the repository:
 
 When OpenCode starts, OpenCodeLab sets `OPENCODE_CONFIG` to that overlay and `OPENCODELAB_API_KEY` only for the child OpenCode process. The overlay references the key through an environment variable rather than hardcoding it.
 
+It also sets `OPENCODE_ENABLE_EXA=1` for that process, unless you already set it, so OpenCode exposes its built-in `websearch` tool (backed by Exa's hosted search) alongside `webfetch`. Search queries go to Exa. Set `OPENCODE_ENABLE_EXA=false` to turn it off.
+
+The overlay also bounds OpenCode's compaction (old tool outputs pruned, at most one recent turn kept verbatim) and scales the output reserve to the context window, so long agentic sessions compact once instead of looping on a full window.
+
 OpenCodeLab does **not** replace your global OpenCode config.
 
 ## Modal signup

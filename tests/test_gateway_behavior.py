@@ -12,6 +12,7 @@ from opencodelab.modal_template import render_modal_app
 ENDPOINT_LABEL = modal_endpoint_label("qwen38")
 MODEL_MODAL_RUN = f"https://workspace--{ENDPOINT_LABEL}-model.modal.run"
 MODEL_MODAL_DIRECT = f"https://workspace--{ENDPOINT_LABEL}-model.us-east.modal.direct"
+MODEL_MODAL_RUN_REGIONAL = f"https://workspace--{ENDPOINT_LABEL}-model.us-east.modal.run"
 AUTH = {"authorization": "Bearer gateway-key"}
 
 
@@ -254,6 +255,8 @@ def test_gateway_rejects_injected_source_segment_before_model_label(gateway):
         f"https://workspace--evil--{ENDPOINT_LABEL}-model.modal.run",
         f"https://workspace--evil--{ENDPOINT_LABEL}-model.us-east.modal.direct",
         f"https://{ENDPOINT_LABEL}-model.modal.run",
+        f"https://workspace--{ENDPOINT_LABEL}-model.evil.modal.run",
+        f"https://workspace--{ENDPOINT_LABEL}-model.a.us-east.modal.run",
     ):
         state["model_url"] = bad
         result = call("chat/completions", _IncomingRequest(headers=AUTH, body=b"{}"))
@@ -299,6 +302,15 @@ def test_gateway_trusts_official_modal_direct_region_target(gateway):
     result = call("models", _IncomingRequest(headers=AUTH))
     assert result.status_code == 200
     assert state["sent"][0].url == f"{MODEL_MODAL_DIRECT}/v1/models"
+
+
+def test_gateway_trusts_regional_modal_run_target(gateway):
+    state, _, call = gateway
+    state["model_url"] = MODEL_MODAL_RUN_REGIONAL
+    state["responses"] = [_upstream_response()]
+    result = call("models", _IncomingRequest(headers=AUTH))
+    assert result.status_code == 200
+    assert state["sent"][0].url == f"{MODEL_MODAL_RUN_REGIONAL}/v1/models"
 
 
 def test_gateway_blocks_cross_origin_redirect(gateway):

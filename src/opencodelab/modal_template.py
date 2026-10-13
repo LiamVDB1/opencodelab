@@ -163,27 +163,25 @@ def gateway():
     def trusted_model_host(host: str) -> bool:
         model_label = ENDPOINT_LABEL + "-model"
         if host.endswith(".modal.run"):
-            rest = host[: -len(".modal.run")]
-            source, separator, label = rest.partition("--")
-            return (
-                bool(separator)
-                and bool(source)
-                and label == model_label
-                and _dns_label.fullmatch(rest) is not None
-            )
-        if host.endswith(".modal.direct"):
-            labels = host[: -len(".modal.direct")].split(".")
-            if len(labels) != 2 or _region_label.fullmatch(labels[1]) is None:
+            labels = host[: -len(".modal.run")].split(".")
+            if len(labels) not in (1, 2):
                 return False
-            first = labels[0]
-            source, separator, label = first.partition("--")
-            return (
-                bool(separator)
-                and bool(source)
-                and label == model_label
-                and _dns_label.fullmatch(first) is not None
-            )
-        return False
+        elif host.endswith(".modal.direct"):
+            labels = host[: -len(".modal.direct")].split(".")
+            if len(labels) != 2:
+                return False
+        else:
+            return False
+        if len(labels) == 2 and _region_label.fullmatch(labels[1]) is None:
+            return False
+        first = labels[0]
+        source, separator, label = first.partition("--")
+        return (
+            bool(separator)
+            and bool(source)
+            and label == model_label
+            and _dns_label.fullmatch(first) is not None
+        )
 
     web = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]

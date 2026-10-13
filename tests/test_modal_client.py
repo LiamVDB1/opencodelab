@@ -152,7 +152,8 @@ def test_modal_endpoint_rejects_credential_exfiltration_origins(endpoint: str):
         "https://workspace--ocl-abc.modal.direct",
         "https://workspace--ocl-abc.a.b.modal.direct",
         "https://workspace--ocl-abc.not-a-region.modal.direct",
-        "https://workspace--ocl-abc.us-east.modal.run",
+        "https://workspace--ocl-abc.not-a-region.modal.run",
+        "https://workspace--ocl-abc.a.us-east.modal.run",
     ],
 )
 def test_modal_endpoint_rejects_unofficial_intermediate_host_labels(endpoint: str):
@@ -169,6 +170,35 @@ def test_modal_endpoint_accepts_official_shapes():
         normalize_modal_endpoint("https://workspace--ocl-abc-serve.us-east.modal.direct")
         == "https://workspace--ocl-abc-serve.us-east.modal.direct"
     )
+    assert (
+        normalize_modal_endpoint("https://workspace--ocl-abc.us-east.modal.run")
+        == "https://workspace--ocl-abc.us-east.modal.run"
+    )
+
+
+def test_deploy_parses_regional_modal_run_endpoint_with_wide_console(monkeypatch, tmp_path: Path):
+    # Regression: Modal 1.6 issues <source>--<label>.<region>.modal.run endpoints,
+    # and at the default 80 columns its tree output wrapped them mid-hostname.
+    observed: dict[str, str] = {}
+
+    def fake_run(command, **kwargs):
+        observed["columns"] = kwargs["env"]["COLUMNS"]
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout="\u2514\u2500\u2500 https://workspace--ocl-test.us-east.modal.run (unauthenticated)",
+            stderr="",
+        )
+
+    monkeypatch.setattr("opencodelab.modal_client.subprocess.run", fake_run)
+
+    assert deploy_modal_app(
+        tmp_path / "app.py",
+        "app-name",
+        environment_name="opencodelab-test",
+        endpoint_label="ocl-test",
+    ) == "https://workspace--ocl-test.us-east.modal.run"
+    assert observed["columns"] == "1000"
 
 
 @pytest.mark.parametrize(

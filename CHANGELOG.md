@@ -4,6 +4,9 @@ All notable changes to OpenCodeLab are documented here.
 
 ## Unreleased
 
+- Accept Modal's regional `<source>--<label>.<region>.modal.run` endpoints in local validation and in the generated gateway, and render Modal CLI output at 1000 columns so long endpoint URLs are not wrapped mid-hostname. Unknown or extra intermediate labels are still rejected.
+- Enable OpenCode's built-in `websearch` tool (Exa) for OpenCodeLab launches by setting `OPENCODE_ENABLE_EXA=1` unless the user already set it; `OPENCODE_ENABLE_EXA=false` opts out.
+
 - Complete setup in Modal workspaces without RBAC. Modal 1.6 rejects environment grants for workspace-wide proxy tokens ("Token is not environment-scoped"); setup now treats that as the documented non-RBAC case, keeps the token server-side in the gateway, and still fails closed on any other grant error. Setup failures now include the underlying cause.
 
 - Fix an OpenCode compaction loop on small context windows: the generated overlay now prunes old tool outputs, keeps at most one recent turn (an eighth of the window) verbatim through compaction, and reserves an eighth of the window for output instead of a flat 16K. Previously a compacted session whose preserved tail held large tool outputs could exceed vLLM's `max_model_len` on every retry and compact forever.

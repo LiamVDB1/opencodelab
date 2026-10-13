@@ -126,6 +126,27 @@ def test_launch_uses_overlay_without_overwriting_normal_config(monkeypatch, tmp_
     assert "secret-value" not in Path(observed["env"]["OPENCODE_CONFIG"]).read_text(encoding="utf-8")
 
 
+@pytest.mark.parametrize(("parent", "expected"), [(None, "1"), ("false", "false")])
+def test_launch_enables_websearch_unless_user_opted_out(
+    monkeypatch, tmp_path: Path, parent: str | None, expected: str
+):
+    if parent is None:
+        monkeypatch.delenv("OPENCODE_ENABLE_EXA", raising=False)
+    else:
+        monkeypatch.setenv("OPENCODE_ENABLE_EXA", parent)
+    monkeypatch.setattr("opencodelab.opencode.ensure_opencode", lambda: "/usr/bin/opencode")
+    observed: dict[str, object] = {}
+
+    def fake_run(args, env, check):
+        observed.update(env=env)
+        return subprocess.CompletedProcess(args, 0)
+
+    monkeypatch.setattr("opencodelab.opencode.subprocess.run", fake_run)
+    launch_opencode(_profile(), "test-key", ConfigStore(tmp_path / "lab"), [])
+
+    assert observed["env"]["OPENCODE_ENABLE_EXA"] == expected
+
+
 def test_scrub_child_environment_removes_modal_and_hf_secret_material():
     dirty = dict(
         os.environ,

@@ -24,7 +24,7 @@ _WORKSPACE_LINE = re.compile(
     re.MULTILINE,
 )
 _DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
-_MODAL_DIRECT_REGION = re.compile(r"^[a-z]{2}-[a-z0-9]+$")
+_MODAL_REGION = re.compile(r"^[a-z]{2}-[a-z0-9]+$")
 _MODAL_SOURCE = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
 
 
@@ -39,17 +39,14 @@ def _strict_modal_host_labels(host: str) -> list[str] | None:
 def strict_modal_host_shape(host: str) -> bool:
     """Require the exact official Modal hostname shape with no spoofable labels."""
     labels = _strict_modal_host_labels(host)
-    if labels is None:
+    if labels is None or _DNS_LABEL.fullmatch(labels[0]) is None:
         return False
-    if host.endswith(".modal.run"):
-        # Exactly one endpoint label directly under modal.run.
-        return len(labels) == 1 and _DNS_LABEL.fullmatch(labels[0]) is not None
-    # modal.direct: exactly one endpoint label plus one documented region label.
-    return (
-        len(labels) == 2
-        and _DNS_LABEL.fullmatch(labels[0]) is not None
-        and _MODAL_DIRECT_REGION.fullmatch(labels[1]) is not None
-    )
+    if len(labels) == 2:
+        # One endpoint label plus one documented region label, e.g.
+        # <source>--<label>.us-east.modal.run or .modal.direct.
+        return _MODAL_REGION.fullmatch(labels[1]) is not None
+    # Only modal.run also issues a region-less endpoint label.
+    return len(labels) == 1 and host.endswith(".modal.run")
 
 
 def modal_command(*args: str) -> list[str]:
@@ -62,6 +59,9 @@ def modal_subprocess_env() -> dict[str, str]:
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
     env.pop("PYTHONHOME", None)
+    # Modal renders captured output at 80 columns by default, which wraps long
+    # regional endpoint URLs across lines so they cannot be parsed.
+    env["COLUMNS"] = "1000"
     return env
 
 

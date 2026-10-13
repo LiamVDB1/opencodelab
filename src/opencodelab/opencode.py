@@ -145,6 +145,9 @@ def launch_opencode(
     overlay_path: Path = store.overlay_path(profile.name)
     store.write_generated(overlay_path, render_overlay(profile, api_key))
     env = scrub_child_environment(os.environ)
+    # OpenCode only exposes its websearch tool for its own provider unless Exa is
+    # enabled; keep an explicit user choice such as OPENCODE_ENABLE_EXA=false.
+    env.setdefault("OPENCODE_ENABLE_EXA", "1")
     env["OPENCODELAB_API_KEY"] = api_key
     env["OPENCODE_CONFIG"] = str(overlay_path)
     args = build_opencode_args(profile, forwarded)
